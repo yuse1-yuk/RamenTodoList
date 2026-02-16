@@ -1,0 +1,224 @@
+import { useEffect, useMemo, useState, useCallback, memo, useRef } from 'react';
+
+const INGREDIENTS = [
+  { key: 'egg', label: '味玉', image: '/assets/egg_720.png' },
+  { key: 'negi', label: 'ねぎ', image: '/assets/negi_480.png' },
+  { key: 'chashu', label: 'チャーシュー', image: '/assets/chashu.png' },
+  { key: 'naruto', label: 'なると', image: '/assets/naruto.png' },
+  { key: 'menma', label: 'メンマ', image: '/assets/menma.png' },
+];
+
+const STORAGE_KEY = 'ramen-tasks-v1';
+const randomBetween = (min, max) => Math.random() * (max - min) + min;
+
+const makePosition = () => ({
+  top: randomBetween(28, 68),
+  left: randomBetween(24, 76),
+  rotate: randomBetween(-14, 14),
+});
+
+const loadTasks = () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed;
+  } catch (err) {
+    console.error('failed to load tasks', err);
+    return [];
+  }
+};
+
+const clamp = (v, min, max) => Math.min(Math.max(v, min), max);
+
+const confineToBowl = (left, top) => {
+  // 0-100 (%) space; keep within inner circle so具が丼からはみ出さない
+  left = clamp(left, 12, 88);
+  top = clamp(top, 16, 88);
+
+  const dx = left - 50;
+  const dy = top - 50;
+  const dist = Math.hypot(dx, dy);
+  const maxR = 36; // tune to bowl interior
+  if (dist > maxR) {
+    const f = maxR / dist;
+    left = 50 + dx * f;
+    top = 50 + dy * f;
+  }
+  return { left, top };
+};
+
+const Topping = memo(function Topping({ task, ingredient, onPointerDown, dragging }) {
+  const style = {
+    top: `${task.position.top}%`,
+    left: `${task.position.left}%`,
+    transform: `translate(-50%, -50%) rotate(${task.position.rotate}deg)`
+  };
+
+  return (
+    <div
+      className={`topping ${task.status === 'eating' ? 'eating' : ''} ${dragging ? 'dragging' : ''}`}
+      style={style}
+      onPointerDown={onPointerDown}
+    >
+      <img src={ingredient.image} alt={ingredient.label} draggable={false} />
+      <div className="label">{task.name}</div>
+    </div>
+  );
+});
+
+export default function App() {
+  const [taskName, setTaskName] = useState('');
+  const [tasks, setTasks] = useState(() => loadTasks());
+  const [seed, setSeed] = useState(() => Date.now());
+  const [renderReady, setRenderReady] = useState(false);
+  const [draggingId, setDraggingId] = useState(null);
+  const bowlRef = useRef(null);
+
+  const ingredientMap = useMemo(
+    () => Object.fromEntries(INGREDIENTS.map((i) => [i.key, i])),
+    []
+  );
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+  }, [tasks]);
+
+  // avoid hydration mismatch on SSR/Next; also delays heavy render until mounted
+  useEffect(() => {
+    setRenderReady(true);
+  }, []);
+
+  const positionFromEvent = useCallback((event) => {
+    const rect = bowlRef.current?.getBoundingClientRect();
+    if (!rect) return null;
+    const left = ((event.clientX - rect.left) / rect.width) * 100;
+    const top = ((event.clientY - rect.top) / rect.height) * 100;
+    return confineToBowl(left, top);
+  }, []);
+
+  const handleAdd = useCallback((e) => {
+    e.preventDefault();
+    const name = taskName.trim();
+    if (!name) return;
+
+    // use a stable modulo without creating a new array to keep perf snappy when tasks grow
+    const index = ((tasks.length + seed) % INGREDIENTS.length + INGREDIENTS.length) % INGREDIENTS.length;
+    const ingredient = INGREDIENTS[index];
+    const newTask = {
+      id: crypto.randomUUID(),
+      name,
+      ingredient: ingredient.key,
+      position: makePosition(),
+      status: 'ready',
+      createdAt: Date.now(),
+    };
+
+    setTasks((prev) => [...prev, newTask]);
+    setTaskName('');
+    setSeed((prev) => prev + 1);
+  }, [taskName, tasks.length, seed]);
+
+  const moveDrag = useCallback((event, idOverride = null) => {
+    const targetId = idOverride ?? draggingId;
+    if (!targetId) return;
+    const nextPos = positionFromEvent(event);
+    if (!nextPos) return;
+
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === targetId
+          ? { ...t, position: { ...t.position, top: nextPos.top, left: nextPos.left } }
+          : t
+      )
+    );
+  }, [draggingId, positionFromEvent]);
+
+  const startDrag = useCallback((id, event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.pointerId && event.target?.setPointerCapture) {
+      event.target.setPointerCapture(event.pointerId);
+    }
+    setDraggingId(id);
+    moveDrag(event, id);
+  }, [moveDrag]);
+
+  useEffect(() => {
+    if (!draggingId) return;
+    const handleUp = () => setDraggingId(null);
+    const handleMove = (e) => moveDrag(e);
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleUp);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+    };
+  }, [draggingId, moveDrag]);
+
+  const handleComplete = useCallback((id) => {
+    setTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, status: 'eating' } : t))
+    );
+    setTimeout(() => {
+      setTasks((prev) => prev.filter((t) => t.id !== id));
+    }, 260);
+  }, []);
+
+  return (
+    <div className="page">
+      <div className="headline">🍜 ラーメンをモチーフにした Todo 丼</div>
+
+      <div className="panel">
+        <form className="form-row" onSubmit={handleAdd}>
+          <input
+            type="text"
+            placeholder="具にしたいタスクを書く（例: スライド下書き）"
+            value={taskName}
+            onChange={(e) => setTaskName(e.target.value)}
+            aria-label="タスク名"
+          />
+          <button type="submit" disabled={!taskName.trim()}>
+            具を追加
+          </button>
+        </form>
+      </div>
+
+      <div className="panel">
+        <div className="bowl-wrapper" ref={bowlRef}>
+          <img
+            src="/assets/don+chashu.png"
+            alt="ラーメンのどんぶり"
+            className="bowl"
+            draggable={false}
+          />
+
+          {renderReady &&
+            tasks.map((task) => (
+              <Topping
+                key={task.id}
+                task={task}
+                ingredient={ingredientMap[task.ingredient]}
+                onPointerDown={(e) => startDrag(task.id, e)}
+                dragging={draggingId === task.id}
+              />
+            ))}
+        </div>
+      </div>
+
+      <div className="panel list">
+        {tasks.length === 0 && <div className="mini">まだ具がありません。追加してみてください。</div>}
+        {tasks.map((task) => (
+          <div key={task.id} className="list-item">
+            <div className="name">{task.name}</div>
+            <div className="mini">{ingredientMap[task.ingredient]?.label}</div>
+            <button onClick={() => handleComplete(task.id)}>食べた！</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
