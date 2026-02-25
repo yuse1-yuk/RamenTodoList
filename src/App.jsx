@@ -7,6 +7,25 @@ const INGREDIENTS = [
   { key: 'naruto', label: 'なると', image: '/assets/naruto.png' },
   { key: 'menma', label: 'メンマ', image: '/assets/menma.png' },
 ];
+const INGREDIENT_KEYS = new Set(INGREDIENTS.map((i) => i.key));
+
+// 具材ごとの初期サイズ（scale）
+const BASE_SCALES = {
+  egg: 1.0,        // 中くらい
+  chashu: 1.30,    // 大きめ
+  negi: 0.85,      // やや小さく
+  menma: 0.75,     // 小さめ
+  naruto: 0.95,    // 少しだけ小さく
+};
+
+// 具材ごとのベース幅（CSS長さ）
+const BASE_SIZES = {
+  egg: 'clamp(120px, 34vw, 190px)',
+  chashu: 'clamp(140px, 38vw, 220px)',
+  negi: 'clamp(100px, 30vw, 165px)',
+  menma: 'clamp(96px, 28vw, 155px)',
+  naruto: 'clamp(110px, 32vw, 175px)',
+};
 
 const STORAGE_KEY = 'ramen-tasks-v1';
 const randomBetween = (min, max) => Math.random() * (max - min) + min;
@@ -17,14 +36,30 @@ const loadTasks = () => {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.map((t) => ({
-      ...t,
-      position: {
-        ...t.position,
-        rotate: t.position?.rotate ?? randomBetween(-14, 14),
-      },
-      scale: t.scale ?? 1,
-    }));
+    return parsed
+      .filter(
+        (t) =>
+          t &&
+          typeof t === 'object' &&
+          typeof t.name === 'string' &&
+          INGREDIENT_KEYS.has(t.ingredient)
+      )
+      .map((t) => ({
+        ...t,
+        position: confineToBowl(
+          Number.isFinite(t.position?.left) ? t.position.left : randomBetween(26, 74),
+          Number.isFinite(t.position?.top) ? t.position.top : randomBetween(30, 70)
+        ),
+        scale: Number.isFinite(t.scale) ? t.scale : BASE_SCALES[t.ingredient] ?? 1,
+        locked: t.locked ?? false,
+      }))
+      .map((t) => ({
+        ...t,
+        position: {
+          ...t.position,
+          rotate: Number.isFinite(t.position?.rotate) ? t.position.rotate : randomBetween(-14, 14),
+        },
+      }));
   } catch (err) {
     console.error('failed to load tasks', err);
     return [];
@@ -64,9 +99,16 @@ const Topping = memo(function Topping({
   selected,
   onSelect,
   onScale,
-  onRotate
+  onRotate,
+  onDelete,
+  onEat,
+  showEat
 }) {
+  const width = BASE_SIZES[task.ingredient] ?? 'clamp(110px, 32vw, 180px)';
+  const labelColor = task.ingredient === 'naruto' ? '#1b120d' : '#ffffff';
+  const labelShadow = task.ingredient === 'naruto' ? '0 1px 4px rgba(255,255,255,0.4)' : '0 2px 8px rgba(0, 0, 0, 0.6)';
   const style = {
+    width,
     top: `${task.position.top}%`,
     left: `${task.position.left}%`,
     transform: `translate(-50%, -50%) rotate(${task.position.rotate}deg) scale(${task.scale ?? 1})`
@@ -74,15 +116,34 @@ const Topping = memo(function Topping({
 
   return (
     <div
-      className={`topping ${task.status === 'eating' ? 'eating' : ''} ${dragging ? 'dragging' : ''} ${selected ? 'selected' : ''}`}
+      className={`topping ${task.status === 'eating' ? 'eating' : ''} ${dragging ? 'dragging' : ''} ${selected ? 'selected' : ''} ${task.locked ? 'locked' : ''}`}
       style={style}
       onPointerDown={onPointerDown}
-      onClick={(e) => { e.stopPropagation(); onSelect?.(); }}
+      onClick={(e) => { e.stopPropagation(); if (!task.locked) onSelect?.(); }}
     >
       <img src={ingredient.image} alt={ingredient.label} draggable={false} />
-      <div className="label">{task.name}</div>
+      <div className="label" style={{ color: labelColor, textShadow: labelShadow }}>{task.name}</div>
 
-      {selected && (
+      <div className="hover-actions">
+        <button
+          className="ghost small"
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onDelete?.(); }}
+        >
+          削除
+        </button>
+        {showEat && (
+          <button
+            className="accent small"
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onEat?.(); }}
+          >
+            食べた！
+          </button>
+        )}
+      </div>
+
+      {selected && !task.locked && (
         <>
           <button
             className="handle rotate"
@@ -113,6 +174,8 @@ export default function App() {
   const [nameInput, setNameInput] = useState('');
   const [selectedId, setSelectedId] = useState(null);
   const [transformSession, setTransformSession] = useState(null); // { type, id, startDist, startScale, center, startAngle, startRotate }
+  const [confirmed, setConfirmed] = useState(false); // 一度でも「確定」したら true
+  const [confirmLockOpen, setConfirmLockOpen] = useState(false); // 確定前の注意ポップアップ
   const transformSessionRef = useRef(null);
   const bowlRef = useRef(null);
   const nameInputRef = useRef(null);
@@ -121,9 +184,26 @@ export default function App() {
     () => Object.fromEntries(INGREDIENTS.map((i) => [i.key, i])),
     []
   );
+  const hasTasks = tasks.length > 0;
+  const allEaten = confirmed && tasks.length === 0;
+  const bowlSrc = allEaten ? '/assets/don.png' : '/assets/don+chashu.png';
+  const canEat = confirmed;
+
+  const resetBowl = useCallback(() => {
+    setTasks([]);
+    setConfirmed(false);
+    setSelectedId(null);
+    setDraggingId(null);
+    transformSessionRef.current = null;
+    setTransformSession(null);
+  }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+    } catch (err) {
+      console.error('failed to save tasks', err);
+    }
   }, [tasks]);
 
   // avoid hydration mismatch on SSR/Next; also delays heavy render until mounted
@@ -160,11 +240,12 @@ export default function App() {
       name: trimmed,
       ingredient: pendingTask.ingredient,
       position: { ...pendingTask.position, rotate: randomBetween(-14, 14) },
-      scale: 1,
+      scale: BASE_SCALES[pendingTask.ingredient] ?? 1,
       status: 'ready',
       createdAt: Date.now(),
     };
     setTasks((prev) => [...prev, newTask]);
+    setConfirmed(false); // 新しい具を追加したら完食フラグをリセット
     setPendingTask(null);
     setNameInput('');
   }, [nameInput, pendingTask]);
@@ -184,6 +265,15 @@ export default function App() {
       nameInputRef.current.select();
     }
   }, [pendingTask]);
+
+  useEffect(() => {
+    if (!confirmLockOpen) return undefined;
+    const handler = (e) => {
+      if (e.key === 'Escape') setConfirmLockOpen(false);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [confirmLockOpen]);
 
   // モーダルが開いている間のEnter/Escapeショートカット
   useEffect(() => {
@@ -219,6 +309,8 @@ export default function App() {
   }, [draggingId, positionFromEvent]);
 
   const startExistingDrag = useCallback((id, event) => {
+    const target = tasks.find((t) => t.id === id);
+    if (target?.locked) return;
     event.preventDefault();
     event.stopPropagation();
     if (event.pointerId && event.target?.setPointerCapture) {
@@ -227,7 +319,7 @@ export default function App() {
     setDraggingId(id);
     setSelectedId(id);
     moveExistingDrag(event, id);
-  }, [moveExistingDrag]);
+  }, [moveExistingDrag, tasks]);
 
   useEffect(() => {
     if (!draggingId) return;
@@ -341,6 +433,17 @@ export default function App() {
     if (selectedId === id) setSelectedId(null);
   }, [selectedId]);
 
+  const confirmToday = useCallback(() => {
+    if (tasks.length === 0) return;
+    setTasks((prev) => prev.map((t) => ({ ...t, locked: true })));
+    setConfirmed(true);
+    setSelectedId(null);
+    setDraggingId(null);
+    transformSessionRef.current = null;
+    setTransformSession(null);
+    setConfirmLockOpen(false);
+  }, [tasks.length]);
+
   const getCenterPx = useCallback((task) => {
     const rect = bowlRef.current?.getBoundingClientRect();
     if (!rect) return null;
@@ -351,6 +454,7 @@ export default function App() {
   }, []);
 
   const startScale = useCallback((task, event) => {
+    if (task.locked) return;
     event.stopPropagation();
     event.preventDefault();
     if (event.pointerId && event.target?.setPointerCapture) {
@@ -371,6 +475,7 @@ export default function App() {
   }, [getCenterPx]);
 
   const startRotate = useCallback((task, event) => {
+    if (task.locked) return;
     event.stopPropagation();
     event.preventDefault();
     if (event.pointerId && event.target?.setPointerCapture) {
@@ -393,6 +498,14 @@ export default function App() {
   return (
     <div className="page">
       <div className="headline">🍜 ラーメンをモチーフにした Todo 丼</div>
+
+      <div className="panel confirm-bar">
+        <div>
+          <div className="confirm-title">今日のタスクを確定</div>
+          <div className="confirm-note">確定すると今ある具は動かせなくなります（新しく追加した具は動かせます）。</div>
+        </div>
+        <button onClick={() => setConfirmLockOpen(true)} disabled={!hasTasks}>確定する</button>
+      </div>
 
       <div className="panel">
         <div className="palette-header">具材をドラッグして丼に入れ、名前を付けてください</div>
@@ -419,7 +532,7 @@ export default function App() {
       <div className="panel">
         <div className={`bowl-wrapper ${draggingIngredient ? 'drag-target' : ''}`} ref={bowlRef}>
           <img
-            src="/assets/don+chashu.png"
+            src={bowlSrc}
             alt="ラーメンのどんぶり"
             className="bowl"
             draggable={false}
@@ -444,6 +557,7 @@ export default function App() {
 
           {renderReady &&
             tasks.map((task) => (
+              ingredientMap[task.ingredient] ? (
               <Topping
                 key={task.id}
                 task={task}
@@ -454,23 +568,24 @@ export default function App() {
                 onSelect={() => setSelectedId(task.id)}
                 onScale={(e) => startScale(task, e)}
                 onRotate={(e) => startRotate(task, e)}
+                onDelete={() => removeTask(task.id)}
+                onEat={() => handleComplete(task.id)}
+                showEat={canEat}
               />
+              ) : null
             ))}
-        </div>
-      </div>
 
-      <div className="panel list">
-        {tasks.length === 0 && <div className="mini">具をドラッグして追加してください。</div>}
-        {tasks.map((task) => (
-          <div key={task.id} className="list-item">
-            <div className="name">{task.name}</div>
-            <div className="mini">{ingredientMap[task.ingredient]?.label}</div>
-            <div className="list-actions">
-              <button className="ghost" onClick={() => removeTask(task.id)}>削除</button>
-              <button onClick={() => handleComplete(task.id)}>食べた！</button>
+          {allEaten && (
+            <div className="finish-overlay">
+              <div className="finish-stack">
+                <div className="finish-text">完食！</div>
+                <button className="accent restart" onClick={resetBowl}>
+                  もう一杯！
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
+          )}
+        </div>
       </div>
 
       {renderReady && draggingIngredient && dragPointer && (
@@ -515,6 +630,19 @@ export default function App() {
             <div className="modal-actions">
               <button className="ghost" onClick={cancelTaskDialog}>キャンセル</button>
               <button disabled={!nameInput.trim()} onClick={submitTask}>追加する</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmLockOpen && (
+        <div className="modal-backdrop" role="presentation" onClick={() => setConfirmLockOpen(false)}>
+          <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">確定すると編集できなくなります</div>
+            <p className="modal-note">既存の具はドラッグ・回転・拡大縮小できなくなります。よろしいですか？</p>
+            <div className="modal-actions">
+              <button className="ghost" onClick={() => setConfirmLockOpen(false)}>やめる</button>
+              <button onClick={confirmToday}>確定する</button>
             </div>
           </div>
         </div>

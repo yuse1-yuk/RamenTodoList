@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "zsh -lc 'unset npm_config_prefix; source ~/.nvm/nvm.sh >/dev/null 2>&1; nvm use 20 >/dev/null 2>&1; pkill -f \"node_modules/.bin/vite\" >/dev/null 2>&1 || true; vite --clearScreen false --host 127.0.0.1'",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -19,7 +19,6 @@
     "vite": "^5.4.21"
   },
   "description": "",
-  "main": "vite.config.js",
   "keywords": [],
   "author": "",
   "license": "ISC"
