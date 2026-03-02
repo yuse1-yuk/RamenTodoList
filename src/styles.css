@@ -125,6 +125,7 @@ button:disabled {
   touch-action: none;
   z-index: 1;
   border-radius: 16px;
+  will-change: transform;
 }
 
 .topping img {
@@ -132,6 +133,10 @@ button:disabled {
   height: auto;
   object-fit: contain;
   filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.2));
+}
+
+.topping.ingredient-naruto img {
+  filter: contrast(1.18) saturate(1.14) drop-shadow(0 8px 12px rgba(214, 95, 124, 0.34));
 }
 
 .topping .label {
@@ -155,6 +160,11 @@ button:disabled {
 .topping.dragging {
   cursor: grabbing;
   z-index: 5;
+  transition: none;
+}
+
+.topping.transforming {
+  transition: none;
 }
 
 .topping.selected {
@@ -174,8 +184,8 @@ button:disabled {
 
 .handle {
   position: absolute;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   border: 2px solid #2d7df6;
   background: #ffffff;
@@ -184,7 +194,7 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
   touch-action: none;
   padding: 0;
@@ -193,7 +203,7 @@ button:disabled {
 }
 
 .handle.rotate {
-  top: -36px;
+  top: -42px;
   left: 50%;
   transform: translateX(-50%);
 }
@@ -202,9 +212,9 @@ button:disabled {
   content: '';
   position: absolute;
   width: 2px;
-  height: 12px;
+  height: 14px;
   background: #2d7df6;
-  top: 18px;
+  top: 22px;
   left: 50%;
   transform: translateX(-50%);
 }
@@ -213,10 +223,10 @@ button:disabled {
   background: #ffffff;
 }
 
-.handle.corner.tl { top: -12px; left: -12px; }
-.handle.corner.tr { top: -12px; right: -12px; }
-.handle.corner.bl { bottom: -12px; left: -12px; }
-.handle.corner.br { bottom: -12px; right: -12px; }
+.handle.corner.tl { top: -14px; left: -14px; }
+.handle.corner.tr { top: -14px; right: -14px; }
+.handle.corner.bl { bottom: -14px; left: -14px; }
+.handle.corner.br { bottom: -14px; right: -14px; }
 
 .hover-actions {
   position: absolute;
@@ -492,7 +502,9 @@ button:disabled {
   border-radius: 14px;
   padding: 10px 10px 8px;
   display: grid;
-  place-items: center;
+  grid-template-rows: 108px auto auto;
+  align-items: end;
+  justify-items: center;
   gap: 6px;
   box-shadow: 0 10px 16px rgba(0, 0, 0, 0.08);
   cursor: grab;
@@ -502,17 +514,36 @@ button:disabled {
 .palette-item img {
   width: clamp(68px, 16vw, 92px);
   height: auto;
+  max-height: 100%;
   object-fit: contain;
+}
+
+.palette-item.is-naruto img {
+  filter: contrast(1.18) saturate(1.16) drop-shadow(0 3px 5px rgba(214, 95, 124, 0.35));
+}
+
+.palette-item.is-nori img {
+  width: clamp(54px, 12vw, 70px);
+  transform: rotate(-8deg);
+  transform-origin: center;
 }
 
 .palette-label {
   font-weight: 700;
   color: var(--text);
+  min-height: 1.4em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .palette-hint {
   font-size: 12px;
   color: #a26a3a;
+  min-height: 1.2em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .bowl-wrapper.drag-target {
@@ -555,11 +586,11 @@ button:disabled {
 
 @media (max-width: 640px) {
   body {
-    padding: max(8px, env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom));
+    padding: max(8px, env(safe-area-inset-top)) 12px max(18px, env(safe-area-inset-bottom));
   }
 
   .headline {
-    font-size: clamp(28px, 7vw, 34px);
+    font-size: clamp(24px, 6.2vw, 30px);
     line-height: 1.15;
     letter-spacing: 0.01em;
     white-space: nowrap;
@@ -568,7 +599,7 @@ button:disabled {
 
   .panel {
     border-radius: 14px;
-    padding: 14px 12px;
+    padding: 12px 10px;
   }
 
   .confirm-note {
@@ -577,33 +608,43 @@ button:disabled {
   }
 
   .palette-header {
-    font-size: 16px;
+    font-size: 15px;
     line-height: 1.35;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
   }
 
   .palette {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 8px;
     overflow: visible;
-    padding: 6px 0 2px;
+    padding: 4px 0 0;
   }
 
   .palette-item {
     min-width: 0;
     width: 100%;
-    border-radius: 13px;
-    padding: 8px 8px;
-    gap: 4px;
+    border-radius: 12px;
+    padding: 6px 6px;
+    grid-template-rows: 62px auto;
+    gap: 2px;
   }
 
   .palette-item img {
-    width: min(76px, 78%);
+    width: min(62px, 82%);
+  }
+
+  .palette-item.is-naruto img {
+    width: min(68px, 86%);
+  }
+
+  .palette-item.is-nori img {
+    width: min(46px, 56%);
   }
 
   .palette-label {
-    font-size: 13px;
+    min-height: 1.2em;
+    font-size: 12px;
   }
 
   .palette-hint {
@@ -611,7 +652,7 @@ button:disabled {
   }
 
   .bowl-wrapper {
-    width: min(430px, calc(100vw - 28px));
+    width: min(430px, calc(100vw - 24px));
   }
 
   .handle {
@@ -674,6 +715,16 @@ button:disabled {
     flex: 1 1 0;
     min-width: 0;
     padding-inline: 10px;
+  }
+}
+
+@media (max-width: 380px) {
+  .palette {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .palette-item {
+    grid-template-rows: 70px auto;
   }
 }
 

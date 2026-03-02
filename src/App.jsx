@@ -6,6 +6,7 @@ const INGREDIENTS = [
   { key: 'chashu', label: 'チャーシュー', image: '/assets/chashu.png' },
   { key: 'naruto', label: 'なると', image: '/assets/naruto.png' },
   { key: 'menma', label: 'メンマ', image: '/assets/menma.png' },
+  { key: 'nori', label: 'のり', image: '/assets/nori.png' },
 ];
 const INGREDIENT_KEYS = new Set(INGREDIENTS.map((i) => i.key));
 
@@ -16,6 +17,7 @@ const BASE_SCALES = {
   negi: 0.85,      // やや小さく
   menma: 0.75,     // 小さめ
   naruto: 0.95,    // 少しだけ小さく
+  nori: 0.78,      // 小さめ
 };
 
 // 具材ごとのベース幅（CSS長さ）
@@ -25,10 +27,20 @@ const BASE_SIZES = {
   negi: 'clamp(100px, 30vw, 165px)',
   menma: 'clamp(96px, 28vw, 155px)',
   naruto: 'clamp(110px, 32vw, 175px)',
+  nori: 'clamp(86px, 24vw, 136px)',
 };
 
 const STORAGE_KEY = 'ramen-tasks-v1';
+const DRAG_START_DISTANCE_PX = 4;
+const SAVE_DEBOUNCE_MS = 220;
 const randomBetween = (min, max) => Math.random() * (max - min) + min;
+const defaultRotateForIngredient = (ingredient) => {
+  if (ingredient === 'nori') {
+    const sign = Math.random() < 0.5 ? -1 : 1;
+    return sign * randomBetween(8, 22);
+  }
+  return randomBetween(-14, 14);
+};
 
 const loadTasks = () => {
   try {
@@ -57,7 +69,9 @@ const loadTasks = () => {
         ...t,
         position: {
           ...t.position,
-          rotate: Number.isFinite(t.position?.rotate) ? t.position.rotate : randomBetween(-14, 14),
+          rotate: Number.isFinite(t.position?.rotate)
+            ? t.position.rotate
+            : defaultRotateForIngredient(t.ingredient),
         },
       }));
   } catch (err) {
@@ -96,6 +110,7 @@ const Topping = memo(function Topping({
   ingredient,
   onPointerDown,
   dragging,
+  transforming,
   selected,
   onSelect,
   onScale,
@@ -106,7 +121,10 @@ const Topping = memo(function Topping({
 }) {
   const width = BASE_SIZES[task.ingredient] ?? 'clamp(110px, 32vw, 180px)';
   const labelColor = task.ingredient === 'naruto' ? '#1b120d' : '#ffffff';
-  const labelShadow = task.ingredient === 'naruto' ? '0 1px 4px rgba(255,255,255,0.4)' : '0 2px 8px rgba(0, 0, 0, 0.6)';
+  const labelShadow =
+    task.ingredient === 'naruto'
+      ? '0 1px 4px rgba(255,255,255,0.4)'
+      : '0 2px 8px rgba(0, 0, 0, 0.6)';
   const style = {
     width,
     top: `${task.position.top}%`,
@@ -116,7 +134,7 @@ const Topping = memo(function Topping({
 
   return (
     <div
-      className={`topping ${task.status === 'eating' ? 'eating' : ''} ${dragging ? 'dragging' : ''} ${selected ? 'selected' : ''} ${task.locked ? 'locked' : ''}`}
+      className={`topping ingredient-${task.ingredient} ${task.status === 'eating' ? 'eating' : ''} ${dragging ? 'dragging' : ''} ${transforming ? 'transforming' : ''} ${selected ? 'selected' : ''} ${task.locked ? 'locked' : ''}`}
       style={style}
       onPointerDown={onPointerDown}
       onClick={(e) => { e.stopPropagation(); onSelect?.(); }}
@@ -177,6 +195,7 @@ export default function App() {
   const [confirmed, setConfirmed] = useState(false); // 一度でも「確定」したら true
   const [confirmLockOpen, setConfirmLockOpen] = useState(false); // 確定前の注意ポップアップ
   const transformSessionRef = useRef(null);
+  const pendingExistingDragRef = useRef(null);
   const bowlRef = useRef(null);
   const nameInputRef = useRef(null);
 
@@ -194,17 +213,23 @@ export default function App() {
     setConfirmed(false);
     setSelectedId(null);
     setDraggingId(null);
+    pendingExistingDragRef.current = null;
     transformSessionRef.current = null;
     setTransformSession(null);
   }, []);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-    } catch (err) {
-      console.error('failed to save tasks', err);
-    }
-  }, [tasks]);
+    // ドラッグ/変形中の同期保存は体感を悪化させるので、操作停止後にまとめて保存する
+    if (draggingId || draggingIngredient || transformSession) return undefined;
+    const timer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+      } catch (err) {
+        console.error('failed to save tasks', err);
+      }
+    }, SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [tasks, draggingId, draggingIngredient, transformSession]);
 
   // avoid hydration mismatch on SSR/Next; also delays heavy render until mounted
   useEffect(() => {
@@ -239,7 +264,10 @@ export default function App() {
       id: crypto.randomUUID(),
       name: trimmed,
       ingredient: pendingTask.ingredient,
-      position: { ...pendingTask.position, rotate: randomBetween(-14, 14) },
+      position: {
+        ...pendingTask.position,
+        rotate: defaultRotateForIngredient(pendingTask.ingredient),
+      },
       scale: BASE_SCALES[pendingTask.ingredient] ?? 1,
       status: 'ready',
       createdAt: Date.now(),
@@ -319,15 +347,36 @@ export default function App() {
     if (event.pointerId && event.target?.setPointerCapture) {
       event.target.setPointerCapture(event.pointerId);
     }
-    setDraggingId(id);
     setSelectedId(id);
-    moveExistingDrag(event, id);
-  }, [moveExistingDrag, tasks]);
+    pendingExistingDragRef.current = {
+      id,
+      pointerId: event.pointerId ?? null,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+  }, [tasks]);
 
   useEffect(() => {
-    if (!draggingId) return;
-    const handleUp = () => setDraggingId(null);
-    const handleMove = (e) => moveExistingDrag(e);
+    const handleMove = (e) => {
+      if (draggingId) {
+        moveExistingDrag(e);
+        return;
+      }
+      const pending = pendingExistingDragRef.current;
+      if (!pending) return;
+      if (pending.pointerId != null && e.pointerId != null && pending.pointerId !== e.pointerId) return;
+      const distance = Math.hypot(e.clientX - pending.startX, e.clientY - pending.startY);
+      if (distance < DRAG_START_DISTANCE_PX) return;
+      pendingExistingDragRef.current = null;
+      setDraggingId(pending.id);
+      moveExistingDrag(e, pending.id);
+    };
+    const handleUp = (e) => {
+      const pending = pendingExistingDragRef.current;
+      if (pending && pending.pointerId != null && e.pointerId != null && pending.pointerId !== e.pointerId) return;
+      pendingExistingDragRef.current = null;
+      setDraggingId(null);
+    };
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
     window.addEventListener('pointercancel', handleUp);
@@ -386,7 +435,7 @@ export default function App() {
       if (session.type === 'scale') {
         const dist = Math.hypot(e.clientX - session.center.x, e.clientY - session.center.y);
         const ratio = dist / session.startDist;
-        const nextScale = clamp(session.startScale * ratio, 0.65, 1.3);
+        const nextScale = clamp(session.startScale * Math.pow(ratio, 0.92), 0.55, 1.55);
         setTasks((prev) =>
           prev.map((t) => (t.id === session.id ? { ...t, scale: nextScale } : t))
         );
@@ -442,6 +491,7 @@ export default function App() {
     setConfirmed(true);
     setSelectedId(null);
     setDraggingId(null);
+    pendingExistingDragRef.current = null;
     transformSessionRef.current = null;
     setTransformSession(null);
     setConfirmLockOpen(false);
@@ -463,13 +513,15 @@ export default function App() {
     if (event.pointerId && event.target?.setPointerCapture) {
       event.target.setPointerCapture(event.pointerId);
     }
+    pendingExistingDragRef.current = null;
+    setDraggingId(null);
     const center = getCenterPx(task);
     if (!center) return;
     const startDist = Math.hypot(event.clientX - center.x, event.clientY - center.y);
     const session = {
       type: 'scale',
       id: task.id,
-      startDist: Math.max(startDist, 1),
+      startDist: Math.max(startDist, 24),
       startScale: task.scale ?? 1,
       center,
     };
@@ -484,6 +536,8 @@ export default function App() {
     if (event.pointerId && event.target?.setPointerCapture) {
       event.target.setPointerCapture(event.pointerId);
     }
+    pendingExistingDragRef.current = null;
+    setDraggingId(null);
     const center = getCenterPx(task);
     if (!center) return;
     const startAngle = Math.atan2(event.clientY - center.y, event.clientX - center.x);
@@ -517,7 +571,7 @@ export default function App() {
             <button
               key={ing.key}
               type="button"
-              className="palette-item"
+              className={`palette-item is-${ing.key}`}
               onPointerDown={(e) => startPaletteDrag(ing.key, e)}
               onClick={() => {
                 const pos = { top: randomBetween(30, 70), left: randomBetween(26, 74) };
@@ -567,6 +621,7 @@ export default function App() {
                 ingredient={ingredientMap[task.ingredient]}
                 onPointerDown={(e) => startExistingDrag(task.id, e)}
                 dragging={draggingId === task.id}
+                transforming={transformSession?.id === task.id}
                 selected={selectedId === task.id}
                 onSelect={() => setSelectedId(task.id)}
                 onScale={(e) => startScale(task, e)}
