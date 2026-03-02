@@ -119,7 +119,7 @@ const Topping = memo(function Topping({
       className={`topping ${task.status === 'eating' ? 'eating' : ''} ${dragging ? 'dragging' : ''} ${selected ? 'selected' : ''} ${task.locked ? 'locked' : ''}`}
       style={style}
       onPointerDown={onPointerDown}
-      onClick={(e) => { e.stopPropagation(); if (!task.locked) onSelect?.(); }}
+      onClick={(e) => { e.stopPropagation(); onSelect?.(); }}
     >
       <img src={ingredient.image} alt={ingredient.label} draggable={false} />
       <div className="label" style={{ color: labelColor, textShadow: labelShadow }}>{task.name}</div>
@@ -310,7 +310,10 @@ export default function App() {
 
   const startExistingDrag = useCallback((id, event) => {
     const target = tasks.find((t) => t.id === id);
-    if (target?.locked) return;
+    if (target?.locked) {
+      setSelectedId(id);
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     if (event.pointerId && event.target?.setPointerCapture) {
@@ -497,7 +500,7 @@ export default function App() {
 
   return (
     <div className="page">
-      <div className="headline">🍜 ラーメンをモチーフにした Todo 丼</div>
+      <div className="headline">🍜 ラーメン Todo 丼</div>
 
       <div className="panel confirm-bar">
         <div>

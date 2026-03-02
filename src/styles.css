@@ -7,16 +7,20 @@
 
 * { box-sizing: border-box; }
 
+html {
+  background: #fef3d7;
+}
+
 body {
   margin: 0;
-  min-height: 100vh;
+  min-height: 100dvh;
   font-family: 'Noto Sans JP', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   background: var(--bg);
   color: var(--text);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 32px 20px 48px;
+  padding: 24px 20px 48px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -60,7 +64,7 @@ input[type='text'] {
   padding: 12px 14px;
   border-radius: 12px;
   border: 1px solid #e0c9b3;
-  font-size: 15px;
+  font-size: 16px;
   outline: none;
   background: #fffaf4;
 }
@@ -76,6 +80,7 @@ button {
   letter-spacing: 0.02em;
   box-shadow: 0 8px 16px rgba(255, 95, 76, 0.35);
   transition: transform 0.15s ease, box-shadow 0.2s ease;
+  touch-action: manipulation;
 }
 
 button:hover {
@@ -231,6 +236,11 @@ button:disabled {
   pointer-events: auto;
 }
 
+.topping.selected .hover-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .hover-actions .small {
   min-width: 78px;
   height: 34px;
@@ -371,7 +381,7 @@ button:disabled {
   border-radius: 12px;
   border: 1px solid #e0c9b3;
   background: #fff;
-  font-size: 15px;
+  font-size: 16px;
   outline: none;
 }
 
@@ -384,6 +394,13 @@ button:disabled {
   font-weight: 700;
   color: #a26a3a;
   margin-bottom: 4px;
+}
+
+.modal-note {
+  margin: 0;
+  color: #6f4731;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .modal-actions {
@@ -503,13 +520,6 @@ button:disabled {
   outline-offset: 8px;
 }
 
-@media (max-width: 640px) {
-  body { padding: 20px 12px 32px; }
-  .panel { padding: 14px 12px; }
-  .bowl-wrapper { width: min(420px, 100vw); }
-.palette-item { min-width: 104px; }
-}
-
 .confirm-bar {
   display: flex;
   align-items: center;
@@ -525,4 +535,153 @@ button:disabled {
 .confirm-note {
   font-size: 13px;
   color: #7a5135;
+  line-height: 1.45;
+}
+
+@media (max-width: 768px) {
+  .page {
+    gap: 16px;
+  }
+
+  .confirm-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .confirm-bar button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 640px) {
+  body {
+    padding: max(8px, env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom));
+  }
+
+  .headline {
+    font-size: clamp(28px, 7vw, 34px);
+    line-height: 1.15;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    margin-inline: auto;
+  }
+
+  .panel {
+    border-radius: 14px;
+    padding: 14px 12px;
+  }
+
+  .confirm-note {
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .palette-header {
+    font-size: 16px;
+    line-height: 1.35;
+    margin-bottom: 10px;
+  }
+
+  .palette {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    overflow: visible;
+    padding: 6px 0 2px;
+  }
+
+  .palette-item {
+    min-width: 0;
+    width: 100%;
+    border-radius: 13px;
+    padding: 8px 8px;
+    gap: 4px;
+  }
+
+  .palette-item img {
+    width: min(76px, 78%);
+  }
+
+  .palette-label {
+    font-size: 13px;
+  }
+
+  .palette-hint {
+    display: none;
+  }
+
+  .bowl-wrapper {
+    width: min(430px, calc(100vw - 28px));
+  }
+
+  .handle {
+    width: 30px;
+    height: 30px;
+    font-size: 15px;
+  }
+
+  .handle.rotate {
+    top: -44px;
+  }
+
+  .handle.rotate::before {
+    height: 14px;
+    top: 24px;
+  }
+
+  .handle.corner.tl {
+    top: -14px;
+    left: -14px;
+  }
+
+  .handle.corner.tr {
+    top: -14px;
+    right: -14px;
+  }
+
+  .handle.corner.bl {
+    bottom: -14px;
+    left: -14px;
+  }
+
+  .handle.corner.br {
+    bottom: -14px;
+    right: -14px;
+  }
+
+  .modal {
+    border-radius: 14px;
+    padding: 14px 12px 12px;
+    gap: 12px;
+  }
+
+  .modal-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .modal-thumb {
+    width: 76px;
+  }
+
+  .modal-actions {
+    justify-content: stretch;
+  }
+
+  .modal-actions button {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: 10px;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .hover-actions .small {
+    min-width: 66px;
+    height: 32px;
+    font-size: 12px;
+    padding: 0 10px;
+  }
 }
