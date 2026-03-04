@@ -59,7 +59,9 @@ body {
   flex-wrap: wrap;
 }
 
-input[type='text'] {
+input[type='text'],
+input[type='email'],
+input[type='password'] {
   flex: 1 1 220px;
   padding: 12px 14px;
   border-radius: 12px;
@@ -67,6 +69,101 @@ input[type='text'] {
   font-size: 16px;
   outline: none;
   background: #fffaf4;
+}
+
+.auth-page {
+  width: min(520px, 100%);
+}
+
+.auth-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.auth-loading {
+  font-weight: 700;
+  color: #7a5135;
+  text-align: center;
+  padding: 12px 0;
+}
+
+.auth-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: #f6e7d7;
+}
+
+.auth-tab {
+  box-shadow: none;
+  transform: none;
+  background: transparent;
+  color: #7a5135;
+  padding: 10px 8px;
+}
+
+.auth-tab:hover {
+  box-shadow: none;
+  transform: none;
+}
+
+.auth-tab.active {
+  background: #ffffff;
+  color: #2f1d14;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+}
+
+.auth-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.auth-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #7a5135;
+}
+
+.auth-error {
+  color: #9b1c1c;
+  background: #ffe8e8;
+  border: 1px solid #f4c8c8;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.auth-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.auth-secondary-toggle {
+  background: transparent;
+  color: #7a5135;
+  border: 1px dashed #e4c9b3;
+  box-shadow: none;
+  font-weight: 600;
+}
+
+.auth-secondary-toggle:hover {
+  transform: none;
+  box-shadow: none;
+  background: #fff4e8;
+}
+
+.auth-google {
+  background: #ffffff;
+  color: #2f1d14;
+  border: 1px solid #ecd1bc;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+}
+
+.auth-note {
+  font-size: 12px;
+  color: #7a5135;
 }
 
 button {
@@ -234,8 +331,8 @@ button:disabled {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  gap: 8px;
-  padding-bottom: 8px;
+  gap: 6px;
+  padding-bottom: 6px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 120ms ease;
@@ -252,11 +349,23 @@ button:disabled {
 }
 
 .hover-actions .small {
-  min-width: 78px;
-  height: 34px;
-  font-size: 13px;
-  padding: 0 12px;
+  min-width: 72px;
+  height: 32px;
+  font-size: 12px;
+  padding: 0 10px;
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.16);
+}
+
+.hover-actions .delete {
+  min-width: 72px;
+  height: 28px;
+  font-size: 11px;
+  padding: 0 8px;
+}
+
+.hover-actions .delete.armed {
+  background: #fbe4dc;
+  color: #8d2d2d;
 }
 
 .hover-actions .ghost {
@@ -558,6 +667,68 @@ button:disabled {
   gap: 12px;
 }
 
+.account-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-info {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.account-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.account-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(248, 230, 211, 0.65);
+  border: 1px solid #edd8c4;
+  color: #8a5633;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.account-name {
+  font-size: 17px;
+  font-weight: 600;
+  color: #2f1d14;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-logout {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid #e8d6c7;
+  background: #f9f1e8;
+  color: #694b39;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: none;
+  white-space: nowrap;
+}
+
+.account-logout:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.account-sync-error {
+  font-size: 12px;
+  color: #8a5633;
+}
+
 .confirm-title {
   font-weight: 800;
   color: #2f1d14;
@@ -572,6 +743,20 @@ button:disabled {
 @media (max-width: 768px) {
   .page {
     gap: 16px;
+  }
+
+  .account-bar {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .account-info {
+    width: 100%;
+  }
+
+  .account-logout {
+    width: auto;
   }
 
   .confirm-bar {
@@ -600,6 +785,23 @@ button:disabled {
   .panel {
     border-radius: 14px;
     padding: 12px 10px;
+  }
+
+  .account-name {
+    font-size: 16px;
+  }
+
+  .auth-page .panel {
+    padding: 14px 12px;
+  }
+
+  .auth-tab {
+    padding: 9px 6px;
+    font-size: 13px;
+  }
+
+  .auth-note {
+    font-size: 11px;
   }
 
   .confirm-note {
@@ -730,9 +932,15 @@ button:disabled {
 
 @media (hover: none), (pointer: coarse) {
   .hover-actions .small {
-    min-width: 66px;
-    height: 32px;
+    min-width: 62px;
+    height: 30px;
     font-size: 12px;
-    padding: 0 10px;
+    padding: 0 8px;
+  }
+
+  .hover-actions .delete {
+    min-width: 64px;
+    height: 26px;
+    font-size: 11px;
   }
 }

@@ -4,11 +4,12 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "zsh -lc 'unset npm_config_prefix; source ~/.nvm/nvm.sh >/dev/null 2>&1; nvm use 20 >/dev/null 2>&1; pkill -f \"node_modules/.bin/vite\" >/dev/null 2>&1 || true; vite --clearScreen false --host 127.0.0.1'",
+    "dev": "zsh -lc 'unset npm_config_prefix; source ~/.nvm/nvm.sh >/dev/null 2>&1; nvm use 20 >/dev/null 2>&1; pkill -f \"node_modules/.bin/vite\" >/dev/null 2>&1 || true; vite --clearScreen false --host localhost'",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "firebase": "^12.10.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

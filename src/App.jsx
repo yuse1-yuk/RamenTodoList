@@ -1,4 +1,15 @@
 import { useEffect, useMemo, useState, useCallback, memo, useRef } from 'react';
+import {
+  GoogleAuthProvider,
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  updateProfile,
+} from 'firebase/auth';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { auth, db } from './firebase';
 
 const INGREDIENTS = [
   { key: 'egg', label: '味玉', image: '/assets/egg_720.png' },
@@ -30,10 +41,13 @@ const BASE_SIZES = {
   nori: 'clamp(86px, 24vw, 136px)',
 };
 
-const STORAGE_KEY = 'ramen-tasks-v1';
+const TASK_STORAGE_PREFIX = 'ramen-tasks-v1';
+const GUEST_TASK_STORAGE_KEY = `${TASK_STORAGE_PREFIX}-guest`;
 const DRAG_START_DISTANCE_PX = 4;
 const SAVE_DEBOUNCE_MS = 220;
 const randomBetween = (min, max) => Math.random() * (max - min) + min;
+const getTaskStorageKey = (accountId) => `${TASK_STORAGE_PREFIX}-${accountId}`;
+const getUserTasksDocRef = (uid) => doc(db, 'users', uid, 'apps', 'ramenTodo');
 const defaultRotateForIngredient = (ingredient) => {
   if (ingredient === 'nori') {
     const sign = Math.random() < 0.5 ? -1 : 1;
@@ -42,38 +56,76 @@ const defaultRotateForIngredient = (ingredient) => {
   return randomBetween(-14, 14);
 };
 
-const loadTasks = () => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (t) =>
-          t &&
-          typeof t === 'object' &&
-          typeof t.name === 'string' &&
-          INGREDIENT_KEYS.has(t.ingredient)
-      )
-      .map((t) => ({
-        ...t,
-        position: confineToBowl(
-          Number.isFinite(t.position?.left) ? t.position.left : randomBetween(26, 74),
-          Number.isFinite(t.position?.top) ? t.position.top : randomBetween(30, 70)
-        ),
-        scale: Number.isFinite(t.scale) ? t.scale : BASE_SCALES[t.ingredient] ?? 1,
-        locked: t.locked ?? false,
-      }))
-      .map((t) => ({
-        ...t,
-        position: {
-          ...t.position,
-          rotate: Number.isFinite(t.position?.rotate)
-            ? t.position.rotate
-            : defaultRotateForIngredient(t.ingredient),
+const mapAuthError = (code) => {
+  const messages = {
+    'auth/invalid-email': 'メールアドレスの形式が正しくありません。',
+    'auth/missing-password': 'パスワードを入力してください。',
+    'auth/weak-password': 'パスワードは6文字以上にしてください。',
+    'auth/email-already-in-use': 'このメールアドレスは既に登録されています。',
+    'auth/user-not-found': 'ユーザーが見つかりません。',
+    'auth/wrong-password': 'パスワードが違います。',
+    'auth/invalid-credential': 'メールアドレスまたはパスワードが正しくありません。',
+    'auth/popup-closed-by-user': 'Googleログインがキャンセルされました。',
+    'auth/cancelled-popup-request': 'Googleログインをもう一度試してください。',
+    'auth/popup-blocked': 'ポップアップがブロックされました。許可して再試行してください。',
+    'auth/unauthorized-domain': 'Firebase の許可ドメイン設定を確認してください。',
+    'auth/network-request-failed': 'ネットワークエラーです。接続を確認してください。',
+  };
+  return messages[code] ?? 'ログインに失敗しました。時間をおいて再試行してください。';
+};
+
+const sanitizeTasks = (parsed) => {
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter(
+      (t) =>
+        t &&
+        typeof t === 'object' &&
+        typeof t.name === 'string' &&
+        INGREDIENT_KEYS.has(t.ingredient)
+    )
+    .map((t) => ({
+      ...t,
+      position: confineToBowl(
+        Number.isFinite(t.position?.left) ? t.position.left : randomBetween(26, 74),
+        Number.isFinite(t.position?.top) ? t.position.top : randomBetween(30, 70)
+      ),
+      scale: Number.isFinite(t.scale) ? t.scale : BASE_SCALES[t.ingredient] ?? 1,
+      locked: t.locked ?? false,
+    }))
+    .map((t) => ({
+      ...t,
+      position: {
+        ...t.position,
+        rotate: Number.isFinite(t.position?.rotate)
+          ? t.position.rotate
+          : defaultRotateForIngredient(t.ingredient),
         },
       }));
+};
+
+const serializeTasks = (tasks) =>
+  sanitizeTasks(tasks).map((t) => ({
+    id: t.id,
+    name: t.name,
+    ingredient: t.ingredient,
+    position: {
+      left: t.position.left,
+      top: t.position.top,
+      rotate: t.position.rotate,
+    },
+    scale: t.scale ?? BASE_SCALES[t.ingredient] ?? 1,
+    status: 'ready',
+    locked: !!t.locked,
+    createdAt: Number.isFinite(t.createdAt) ? t.createdAt : Date.now(),
+  }));
+
+const loadTasks = (storageKey) => {
+  try {
+    if (!storageKey) return [];
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return [];
+    return sanitizeTasks(JSON.parse(raw));
   } catch (err) {
     console.error('failed to load tasks', err);
     return [];
@@ -116,6 +168,8 @@ const Topping = memo(function Topping({
   onScale,
   onRotate,
   onDelete,
+  onArmDelete,
+  deleteArmed,
   onEat,
   showEat
 }) {
@@ -144,11 +198,16 @@ const Topping = memo(function Topping({
 
       <div className="hover-actions">
         <button
-          className="ghost small"
+          className={`ghost small delete ${deleteArmed ? 'armed' : ''}`}
           type="button"
-          onClick={(e) => { e.stopPropagation(); onDelete?.(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (deleteArmed) onDelete?.();
+            else onArmDelete?.();
+          }}
+          aria-label={deleteArmed ? 'もう一度押して削除を実行' : '削除（2回押すと実行）'}
         >
-          削除
+          {deleteArmed ? '削除実行' : '削除×2'}
         </button>
         {showEat && (
           <button
@@ -182,7 +241,7 @@ const Topping = memo(function Topping({
 });
 
 export default function App() {
-  const [tasks, setTasks] = useState(() => loadTasks());
+  const [tasks, setTasks] = useState([]);
   const [renderReady, setRenderReady] = useState(false);
   const [draggingId, setDraggingId] = useState(null); // 既存具のドラッグ
   const [draggingIngredient, setDraggingIngredient] = useState(null); // パレットからの新規具ドラッグ
@@ -191,11 +250,25 @@ export default function App() {
   const [pendingTask, setPendingTask] = useState(null); // { ingredient, position }
   const [nameInput, setNameInput] = useState('');
   const [selectedId, setSelectedId] = useState(null);
+  const [deleteArmedId, setDeleteArmedId] = useState(null);
   const [transformSession, setTransformSession] = useState(null); // { type, id, startDist, startScale, center, startAngle, startRotate }
   const [confirmed, setConfirmed] = useState(false); // 一度でも「確定」したら true
   const [confirmLockOpen, setConfirmLockOpen] = useState(false); // 確定前の注意ポップアップ
+  const [authReady, setAuthReady] = useState(false);
+  const [authUser, setAuthUser] = useState(null);
+  const [authMode, setAuthMode] = useState('login'); // login | signup
+  const [emailInput, setEmailInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
+  const [displayNameInput, setDisplayNameInput] = useState('');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [syncError, setSyncError] = useState('');
+  const [showGoogleAuth, setShowGoogleAuth] = useState(false);
+  const [authPromptOpen, setAuthPromptOpen] = useState(false);
+  const [pendingConfirmAfterAuth, setPendingConfirmAfterAuth] = useState(false);
   const transformSessionRef = useRef(null);
   const pendingExistingDragRef = useRef(null);
+  const deleteArmTimerRef = useRef(null);
   const bowlRef = useRef(null);
   const nameInputRef = useRef(null);
 
@@ -203,33 +276,217 @@ export default function App() {
     () => Object.fromEntries(INGREDIENTS.map((i) => [i.key, i])),
     []
   );
+  const taskStorageKey = authUser ? getTaskStorageKey(authUser.uid) : GUEST_TASK_STORAGE_KEY;
   const hasTasks = tasks.length > 0;
   const allEaten = confirmed && tasks.length === 0;
   const bowlSrc = allEaten ? '/assets/don.png' : '/assets/don+chashu.png';
   const canEat = confirmed;
 
-  const resetBowl = useCallback(() => {
-    setTasks([]);
+  const clearInteractionState = useCallback(() => {
     setConfirmed(false);
     setSelectedId(null);
     setDraggingId(null);
+    setDraggingIngredient(null);
+    setDragPreview(null);
+    setDragPointer(null);
+    setPendingTask(null);
+    setNameInput('');
+    setDeleteArmedId(null);
+    setConfirmLockOpen(false);
     pendingExistingDragRef.current = null;
+    if (deleteArmTimerRef.current) {
+      window.clearTimeout(deleteArmTimerRef.current);
+      deleteArmTimerRef.current = null;
+    }
     transformSessionRef.current = null;
     setTransformSession(null);
   }, []);
 
+  useEffect(() => () => {
+    if (deleteArmTimerRef.current) {
+      window.clearTimeout(deleteArmTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (nextUser) => {
+      setAuthUser(nextUser);
+      setAuthReady(true);
+      setAuthError('');
+      setSyncError('');
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    clearInteractionState();
+    setSyncError('');
+    if (!taskStorageKey) {
+      setTasks([]);
+      return;
+    }
+    let active = true;
+    const userCachedTasks = authUser ? loadTasks(taskStorageKey) : [];
+    const guestCachedTasks = authUser ? loadTasks(GUEST_TASK_STORAGE_KEY) : [];
+    const cachedTasks = authUser
+      ? (userCachedTasks.length > 0 ? userCachedTasks : guestCachedTasks)
+      : loadTasks(taskStorageKey);
+    setTasks(cachedTasks);
+
+    if (authUser && userCachedTasks.length === 0 && guestCachedTasks.length > 0) {
+      try {
+        localStorage.setItem(taskStorageKey, JSON.stringify(guestCachedTasks));
+      } catch (cacheErr) {
+        console.error('failed to migrate guest cache', cacheErr);
+      }
+    }
+
+    if (!authUser) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const hydrateFromCloud = async () => {
+      try {
+        const ref = getUserTasksDocRef(authUser.uid);
+        const snap = await getDoc(ref);
+        if (!active) return;
+        const data = snap.data() ?? {};
+        const remoteRaw = Array.isArray(data.items)
+          ? data.items
+          : Array.isArray(data.tasks)
+            ? data.tasks
+            : Array.isArray(data.tasks?.items)
+              ? data.tasks.items
+            : null;
+        if (Array.isArray(remoteRaw)) {
+          const remoteTasks = sanitizeTasks(remoteRaw);
+          setTasks(remoteTasks);
+          try {
+            localStorage.setItem(taskStorageKey, JSON.stringify(remoteTasks));
+          } catch (cacheErr) {
+            console.error('failed to cache remote tasks', cacheErr);
+          }
+          return;
+        }
+        if (cachedTasks.length > 0) {
+          const serialized = serializeTasks(cachedTasks);
+          await setDoc(
+            ref,
+            { items: serialized, taskCount: serialized.length, savedAt: serverTimestamp() },
+            { merge: true }
+          );
+        }
+      } catch (err) {
+        console.error('failed to load cloud tasks', err);
+        if (active) {
+          setSyncError('クラウド同期に失敗したため、端末保存データを使用しています。');
+        }
+      }
+    };
+
+    hydrateFromCloud();
+    return () => {
+      active = false;
+    };
+  }, [authUser, taskStorageKey, clearInteractionState]);
+
+  const resetBowl = useCallback(() => {
+    setTasks([]);
+    clearInteractionState();
+  }, [clearInteractionState]);
+
   useEffect(() => {
     // ドラッグ/変形中の同期保存は体感を悪化させるので、操作停止後にまとめて保存する
+    if (!taskStorageKey) return undefined;
     if (draggingId || draggingIngredient || transformSession) return undefined;
     const timer = window.setTimeout(() => {
+      const serialized = serializeTasks(tasks);
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+        localStorage.setItem(taskStorageKey, JSON.stringify(serialized));
       } catch (err) {
         console.error('failed to save tasks', err);
       }
+      if (!authUser) return;
+      void (async () => {
+        try {
+          await setDoc(
+            getUserTasksDocRef(authUser.uid),
+            { items: serialized, taskCount: serialized.length, savedAt: serverTimestamp() },
+            { merge: true }
+          );
+          setSyncError('');
+        } catch (err) {
+          console.error('failed to save cloud tasks', err);
+          setSyncError('クラウド保存に失敗しました。ネットワーク状態を確認してください。');
+        }
+      })();
     }, SAVE_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [tasks, draggingId, draggingIngredient, transformSession]);
+  }, [tasks, draggingId, draggingIngredient, transformSession, authUser, taskStorageKey]);
+
+  const clearAuthForm = useCallback(() => {
+    setPasswordInput('');
+    setDisplayNameInput('');
+    setAuthError('');
+  }, []);
+
+  const handleEmailAuth = useCallback(async () => {
+    const email = emailInput.trim();
+    const password = passwordInput.trim();
+    if (!email || !password) {
+      setAuthError('メールアドレスとパスワードを入力してください。');
+      return;
+    }
+    if (authMode === 'signup' && displayNameInput.trim().length === 0) {
+      setAuthError('表示名を入力してください。');
+      return;
+    }
+    setAuthSubmitting(true);
+    setAuthError('');
+    try {
+      if (authMode === 'signup') {
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        await updateProfile(cred.user, { displayName: displayNameInput.trim() });
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+      clearAuthForm();
+      setEmailInput('');
+    } catch (err) {
+      setAuthError(mapAuthError(err?.code));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }, [authMode, clearAuthForm, displayNameInput, emailInput, passwordInput]);
+
+  const handleGoogleLogin = useCallback(async () => {
+    setAuthSubmitting(true);
+    setAuthError('');
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (err) {
+      setAuthError(mapAuthError(err?.code));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    setAuthSubmitting(true);
+    setAuthError('');
+    try {
+      await signOut(auth);
+      setEmailInput('');
+      clearAuthForm();
+    } catch (err) {
+      setAuthError(mapAuthError(err?.code));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }, [clearAuthForm]);
 
   // avoid hydration mismatch on SSR/Next; also delays heavy render until mounted
   useEffect(() => {
@@ -483,7 +740,23 @@ export default function App() {
   const removeTask = useCallback((id) => {
     setTasks((prev) => prev.filter((t) => t.id !== id));
     if (selectedId === id) setSelectedId(null);
-  }, [selectedId]);
+    if (deleteArmedId === id) setDeleteArmedId(null);
+    if (deleteArmTimerRef.current) {
+      window.clearTimeout(deleteArmTimerRef.current);
+      deleteArmTimerRef.current = null;
+    }
+  }, [deleteArmedId, selectedId]);
+
+  const armDelete = useCallback((id) => {
+    setDeleteArmedId(id);
+    if (deleteArmTimerRef.current) {
+      window.clearTimeout(deleteArmTimerRef.current);
+    }
+    deleteArmTimerRef.current = window.setTimeout(() => {
+      setDeleteArmedId(null);
+      deleteArmTimerRef.current = null;
+    }, 1400);
+  }, []);
 
   const confirmToday = useCallback(() => {
     if (tasks.length === 0) return;
@@ -552,16 +825,68 @@ export default function App() {
     setTransformSession(session);
   }, [getCenterPx]);
 
+  useEffect(() => {
+    if (!authUser || !pendingConfirmAfterAuth) return;
+    setPendingConfirmAfterAuth(false);
+    setAuthPromptOpen(false);
+    if (tasks.length > 0) setConfirmLockOpen(true);
+  }, [authUser, pendingConfirmAfterAuth, tasks.length]);
+
+  useEffect(() => {
+    if (!authUser || !authPromptOpen || pendingConfirmAfterAuth) return;
+    setAuthPromptOpen(false);
+  }, [authUser, authPromptOpen, pendingConfirmAfterAuth]);
+
+  const openAuthPrompt = useCallback((forConfirm = false) => {
+    setAuthMode('login');
+    setAuthError(forConfirm ? '確定するにはログインしてください。' : '');
+    setShowGoogleAuth(false);
+    setPendingConfirmAfterAuth(forConfirm);
+    setAuthPromptOpen(true);
+  }, []);
+
+  const closeAuthPrompt = useCallback(() => {
+    if (authSubmitting) return;
+    setAuthPromptOpen(false);
+    setPendingConfirmAfterAuth(false);
+    setAuthError('');
+    setShowGoogleAuth(false);
+  }, [authSubmitting]);
+
+  const handleConfirmIntent = useCallback(() => {
+    if (!hasTasks) return;
+    if (!authUser) {
+      openAuthPrompt(true);
+      return;
+    }
+    setConfirmLockOpen(true);
+  }, [authUser, hasTasks, openAuthPrompt]);
+
   return (
     <div className="page">
       <div className="headline">🍜 ラーメン Todo 丼</div>
+
+      {authUser && (
+        <div className="panel account-bar">
+          <div className="account-info">
+            <div className="account-meta">
+              <span className="account-chip">ログイン中</span>
+              <span className="account-name">{authUser.displayName || authUser.email}</span>
+            </div>
+            {syncError && <div className="account-sync-error">{syncError}</div>}
+          </div>
+          <button type="button" className="account-logout" onClick={handleLogout} disabled={authSubmitting}>
+            ログアウト
+          </button>
+        </div>
+      )}
 
       <div className="panel confirm-bar">
         <div>
           <div className="confirm-title">今日のタスクを確定</div>
           <div className="confirm-note">確定すると今ある具は動かせなくなります（新しく追加した具は動かせます）。</div>
         </div>
-        <button onClick={() => setConfirmLockOpen(true)} disabled={!hasTasks}>確定する</button>
+        <button onClick={handleConfirmIntent} disabled={!hasTasks}>確定する</button>
       </div>
 
       <div className="panel">
@@ -627,6 +952,8 @@ export default function App() {
                 onScale={(e) => startScale(task, e)}
                 onRotate={(e) => startRotate(task, e)}
                 onDelete={() => removeTask(task.id)}
+                onArmDelete={() => armDelete(task.id)}
+                deleteArmed={deleteArmedId === task.id}
                 onEat={() => handleComplete(task.id)}
                 showEat={canEat}
               />
@@ -656,6 +983,137 @@ export default function App() {
             alt={ingredientMap[draggingIngredient].label}
             draggable={false}
           />
+        </div>
+      )}
+
+      {authPromptOpen && !authUser && (
+        <div className="modal-backdrop" role="presentation" onClick={closeAuthPrompt}>
+          <div className="modal auth-panel" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">
+              {pendingConfirmAfterAuth ? '確定するにはログインが必要です' : 'ログイン'}
+            </div>
+            {!authReady ? (
+              <div className="auth-loading">ログイン状態を確認中...</div>
+            ) : (
+              <>
+                <div className="auth-mode-tabs">
+                  <button
+                    type="button"
+                    className={`auth-tab ${authMode === 'login' ? 'active' : ''}`}
+                    onClick={() => {
+                      setAuthMode('login');
+                      setAuthError('');
+                    }}
+                    disabled={authSubmitting}
+                  >
+                    メールログイン
+                  </button>
+                  <button
+                    type="button"
+                    className={`auth-tab ${authMode === 'signup' ? 'active' : ''}`}
+                    onClick={() => {
+                      setAuthMode('signup');
+                      setAuthError('');
+                    }}
+                    disabled={authSubmitting}
+                  >
+                    新規登録
+                  </button>
+                </div>
+
+                <form
+                  className="auth-fields"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleEmailAuth();
+                  }}
+                >
+                  {authMode === 'signup' && (
+                    <>
+                      <label className="auth-label" htmlFor="auth-display-name">表示名</label>
+                      <input
+                        id="auth-display-name"
+                        type="text"
+                        value={displayNameInput}
+                        autoComplete="nickname"
+                        onChange={(e) => setDisplayNameInput(e.target.value)}
+                        disabled={authSubmitting}
+                      />
+                    </>
+                  )}
+                  <label className="auth-label" htmlFor="auth-email">メールアドレス</label>
+                  <input
+                    id="auth-email"
+                    type="email"
+                    value={emailInput}
+                    autoComplete="email"
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    disabled={authSubmitting}
+                  />
+                  <label className="auth-label" htmlFor="auth-password">パスワード</label>
+                  <input
+                    id="auth-password"
+                    type="password"
+                    value={passwordInput}
+                    autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+                    onChange={(e) => setPasswordInput(e.target.value)}
+                    disabled={authSubmitting}
+                  />
+
+                  {authError && <div className="auth-error">{authError}</div>}
+
+                  <div className="modal-actions">
+                    <button type="button" className="ghost" onClick={closeAuthPrompt} disabled={authSubmitting}>
+                      あとで
+                    </button>
+                    <button type="submit" disabled={authSubmitting}>
+                      {authSubmitting ? '処理中...' : authMode === 'signup' ? '登録して続ける' : 'ログイン'}
+                    </button>
+                  </div>
+                </form>
+
+                <div className="auth-actions">
+                  {!showGoogleAuth ? (
+                    <button
+                      type="button"
+                      className="auth-google"
+                      onClick={() => {
+                        setShowGoogleAuth(true);
+                        setAuthError('');
+                      }}
+                      disabled={authSubmitting}
+                    >
+                      Googleアカウントを使う
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="auth-google"
+                      onClick={() => void handleGoogleLogin()}
+                      disabled={authSubmitting}
+                    >
+                      Googleでログイン
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="auth-secondary-toggle"
+                    onClick={() => {
+                      setAuthMode((prev) => (prev === 'login' ? 'signup' : 'login'));
+                      setAuthError('');
+                    }}
+                    disabled={authSubmitting}
+                  >
+                    {authMode === 'login' ? '新規登録に切り替える' : 'ログインに切り替える'}
+                  </button>
+                </div>
+
+                <div className="auth-note">
+                  タスクの作成は未ログインでも可能です。確定時のみログインが必要です。
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 
