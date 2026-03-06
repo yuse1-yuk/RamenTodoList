@@ -864,7 +864,7 @@ export default function App() {
 
   return (
     <div className="page">
-      <div className="headline">🍜 ラーメン Todo 丼</div>
+      <div className="headline">🍜 ラーメン EATO</div>
 
       {authUser && (
         <div className="panel account-bar">
